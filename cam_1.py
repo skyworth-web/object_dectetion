@@ -11,7 +11,7 @@ model = YOLO('yolov8m.pt')  # fast + lightweight
 # Get COCO class names
 COCO_CLASSES = model.names
 
-# User selects classes
+# Class selector widget
 class_selector = widgets.SelectMultiple(
     options=list(COCO_CLASSES.values()),
     value=['person', 'cat', 'dog'],
@@ -21,7 +21,7 @@ class_selector = widgets.SelectMultiple(
 )
 display(class_selector)
 
-# File selector widget (optional, can remove if not needed)
+# Video source selector
 video_path_widget = widgets.Text(
     value='0',  # Default to webcam
     description='Video Source:',
@@ -29,50 +29,47 @@ video_path_widget = widgets.Text(
 )
 display(video_path_widget)
 
+# Stop button and flag
+stop_button = widgets.Button(description="Stop Detection", button_style='danger')
+stop_flag = widgets.ToggleButton(value=False, description='Stop Flag', layout=widgets.Layout(display='none'))
 
-stop_button = widgets.Button(description="🛑 Stop Detection", button_style='danger')
-stop_flag = widgets.ToggleButton(value=False, description='Stop Flag', layout=widgets.Layout(display='none'))  # Hidden flag
-
-# Stop button callback
 def stop_detection(b):
     stop_flag.value = True
 
 stop_button.on_click(stop_detection)
-
-# Display the stop button
 display(stop_button)
 
-# Helper function to compute relative position
+# Compute relative position
 def get_relative_position(box_center, frame_center):
     x_rel = 2 * (box_center[0] - frame_center[0]) / frame_center[0]
     y_rel = 2 * (box_center[1] - frame_center[1]) / frame_center[1]
     return round(x_rel, 2), round(y_rel, 2)
 
-#  Load video file and process using webcam
+# Load video or webcam
 video_source = video_path_widget.value
+cap = cv2.VideoCapture(int(video_source)) if video_source.isdigit() else cv2.VideoCapture(video_source)
 
-# Change the video source to webcam
-cap = cv2.VideoCapture(int(video_source))  # Use 0 for the default webcam
 if not cap.isOpened():
-    print("❌ Unable to open webcam.")
+    print("❌ Unable to open video source.")
 else:
     ret, frame = cap.read()
     if not ret:
-        print("❌ Unable to read from webcam.")
+        print("❌ Unable to read from source.")
     else:
         h, w = frame.shape[:2]
         frame_center = np.array([w / 2, h / 2])
-        print("🎥 Processing webcam feed...")
+        print("🎥 Starting detection...")
 
         try:
             frame_count = 0
             while True:
                 if stop_flag.value:
-                    print("Detection stopped by user.")
+                    print("🛑 Detection stopped by user.")
                     break
+
                 ret, frame = cap.read()
                 if not ret:
-                    print("✅ Webcam stream ended.")
+                    print("✅ Stream ended.")
                     break
 
                 results = model(frame)[0]
@@ -104,20 +101,40 @@ else:
                         "rel_position": {"x": rel_x, "y": rel_y}
                     })
 
+                # Print and overlay Slam Nav feedback
+                if output_data:
+                    obj = output_data[0]  # Only use the first detected object for feedback
+                    rel_x = obj['rel_position']['x']
+                    rel_y = obj['rel_position']['y']
+
+                    if abs(rel_x) > 1.0:
+                        direction = "LEFT" if rel_x < 0 else "RIGHT"
+                        slam_msg = f"🚨 SLAM {direction}! {obj['class']} at edge."
+                    elif abs(rel_y) > 1.0:
+                        slam_msg = f"⚠️ {obj['class']} too high/low"
+                    else:
+                        slam_msg = f"✅ {obj['class']} centered"
+
+                    print(slam_msg)
+
+                    # Draw message on frame
+                    cv2.putText(annotated_frame, slam_msg, (30, 40),
+                                cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 3)
+
                 for obj in output_data:
                     print(obj)
 
-                # Convert BGR to RGB for displaying with matplotlib
+                # Convert BGR to RGB
                 annotated_frame_rgb = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
 
-                # Display the frame using matplotlib
-                clear_output(wait=True)  # Clear previous output
+                # Display
+                clear_output(wait=True)
                 plt.imshow(annotated_frame_rgb)
-                plt.axis('off')  # Hide axis
+                plt.axis('off')
                 plt.show()
 
                 frame_count += 1
 
         finally:
-            cap.release()  # Release the video capture
-            print("✅ Webcam processing complete.")
+            cap.release()
+            print("✅ Detection complete.")
